@@ -154,6 +154,37 @@ local function indent_byte_len(line, label)
   return #line - #label
 end
 
+local function has_tree_chars(line)
+  if not line then return false end
+  return line:find(T, 1, true) ~= nil or line:find(L, 1, true) ~= nil or line:find(V, 1, true) ~= nil
+end
+
+local function common_prefix_bytes(lines)
+  if #lines == 0 then return "" end
+  local ref = lines[1]
+  local len = #ref
+  for i = 2, #lines do
+    local l = lines[i]
+    local j = 0
+    while j < len and j < #l and ref:byte(j + 1) == l:byte(j + 1) do
+      j = j + 1
+    end
+    len = j
+  end
+  local s = ref:sub(1, len)
+  local i = #s
+  while i > 0 do
+    local b = s:byte(i)
+    if b < 128 or b >= 192 then break end
+    i = i - 1
+  end
+  if i > 0 and s:byte(i) >= 192 then
+    local seq_len = s:byte(i) < 224 and 2 or (s:byte(i) < 240 and 3 or 4)
+    if i + seq_len - 1 > #s then s = s:sub(1, i - 1) end
+  end
+  return s
+end
+
 local function find_block(bufnr, lnum)
   local get = function(l)
     if l < 1 then return nil end
@@ -161,24 +192,40 @@ local function find_block(bufnr, lnum)
   end
   local cur = get(lnum)
   if not cur then return nil end
-  local prefix = detect_prefix(cur)
-
-  local function tree_line(line)
-    if not line then return false end
-    if line:sub(1, #prefix) ~= prefix then return false end
-    return has_connector(line:sub(#prefix + 1))
-  end
 
   local start_l, end_l = lnum, lnum
-  while tree_line(get(start_l - 1)) do start_l = start_l - 1 end
-  local above = get(start_l - 1)
-  if above and above:sub(1, #prefix) == prefix and not has_connector(above:sub(#prefix + 1)) then
-    local stripped = above:sub(#prefix + 1):gsub("^%s+", ""):gsub("%s+$", "")
-    if stripped ~= "" then start_l = start_l - 1 end
-  end
-  while tree_line(get(end_l + 1)) do end_l = end_l + 1 end
+  while has_tree_chars(get(start_l - 1)) do start_l = start_l - 1 end
+  while has_tree_chars(get(end_l + 1)) do end_l = end_l + 1 end
 
-  prefix = detect_prefix(get(start_l))
+  if not has_tree_chars(cur) and start_l == end_l then
+    local below = get(lnum + 1)
+    if below and has_tree_chars(below) then
+      end_l = lnum + 1
+      while has_tree_chars(get(end_l + 1)) do end_l = end_l + 1 end
+    end
+  end
+
+  local above = get(start_l - 1)
+  if above and not has_tree_chars(above) then
+    local above_pfx = detect_prefix(above)
+    local first_pfx = detect_prefix(get(start_l))
+    if above_pfx == first_pfx then
+      local rest = above:sub(#above_pfx + 1):gsub("^%s+", ""):gsub("%s+$", "")
+      if rest ~= "" then
+        start_l = start_l - 1
+      end
+    end
+  end
+
+  local all_lines = vim.api.nvim_buf_get_lines(bufnr, start_l - 1, end_l, false)
+  local has_root = not has_tree_chars(all_lines[1])
+  local prefix
+
+  if has_root and #all_lines >= 2 then
+    prefix = common_prefix_bytes(all_lines)
+  else
+    prefix = detect_prefix(all_lines[1])
+  end
 
   return { prefix = prefix, start_l = start_l, end_l = end_l }
 end
@@ -346,6 +393,7 @@ M._internal = {
   render = render,
   parse_all = parse_all,
   detect_prefix = detect_prefix,
+  common_prefix_bytes = common_prefix_bytes,
   ops = ops,
 }
 

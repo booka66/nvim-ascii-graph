@@ -263,7 +263,6 @@ local function set_keys(bufnr)
   imap("<C-d>", function() apply_op_stay_insert(bufnr, "delete") end)
   imap("<Esc>", function()
     vim.cmd("stopinsert")
-    vim.schedule(function() M.exit(bufnr) end)
   end)
 end
 
@@ -312,6 +311,24 @@ end
 function M.toggle()
   local bufnr = vim.api.nvim_get_current_buf()
   if state[bufnr] then M.exit(bufnr) else M.enter(bufnr) end
+end
+
+function M.is_active(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  return state[bufnr] ~= nil
+end
+
+function M.status()
+  if M.is_active() then return "GRAPH" end
+  return ""
+end
+
+function M.lualine_component()
+  return {
+    function() return M.status() end,
+    cond = M.is_active,
+    color = { fg = "#1a1b26", bg = "#7aa2f7", gui = "bold" },
+  }
 end
 
 function M.setup(opts)

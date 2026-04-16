@@ -13,7 +13,7 @@ local CONN_END = L .. H .. " "
 local state = {}
 
 local function detect_prefix(line)
-  local pfx = line:match("^(%s*[%*/#%-;%%]+%s+)")
+  local pfx = line:match("^(%s*[%*/#%-;%%]+%s)")
   if pfx then return pfx end
   return line:match("^(%s*)") or ""
 end
@@ -177,6 +177,8 @@ local function find_block(bufnr, lnum)
     if stripped ~= "" then start_l = start_l - 1 end
   end
   while tree_line(get(end_l + 1)) do end_l = end_l + 1 end
+
+  prefix = detect_prefix(get(start_l))
 
   return { prefix = prefix, start_l = start_l, end_l = end_l }
 end

@@ -207,46 +207,72 @@ local function apply_op(bufnr, name)
   vim.api.nvim_win_set_cursor(0, { target_lnum, col })
 end
 
-local function enter_insert(bufnr, kind)
+local function place_cursor_at_label_end(bufnr, block, nodes, new_lines, idx)
+  local lnum = block.start_l + idx - 1
+  vim.api.nvim_win_set_cursor(0, { lnum, #new_lines[idx] })
+end
+
+local function apply_op_stay_insert(bufnr, name)
+  local block = state[bufnr]
+  if not block then return end
+  local lines = vim.api.nvim_buf_get_lines(bufnr, block.start_l - 1, block.end_l, false)
+  local nodes = parse_all(lines, block.prefix)
+  local idx = cursor_idx(block)
+  local new_idx = ops[name](nodes, idx)
+  local new_lines = render(nodes, block.prefix)
+  vim.api.nvim_buf_set_lines(bufnr, block.start_l - 1, block.end_l, false, new_lines)
+  block.end_l = block.start_l + #new_lines - 1
+  place_cursor_at_label_end(bufnr, block, nodes, new_lines, new_idx)
+end
+
+local N_KEYS = { "<Tab>", "<S-Tab>", "<CR>", "o", "O", "dd", "i", "a", "A", "<Esc>" }
+local I_KEYS = { "<CR>", "<Tab>", "<S-Tab>", "<C-d>", "<Esc>" }
+
+local function enter_insert_at_label_end(bufnr)
   local block = state[bufnr]
   if not block then return end
   local idx = cursor_idx(block)
   local lines = vim.api.nvim_buf_get_lines(bufnr, block.start_l - 1, block.end_l, false)
-  local nodes = parse_all(lines, block.prefix)
-  local node = nodes[idx]
-  local line = lines[idx]
-  local label_start = indent_byte_len(line, node.label)
   local lnum = block.start_l + idx - 1
-  if kind == "i" then
-    vim.api.nvim_win_set_cursor(0, { lnum, label_start })
-    vim.cmd("startinsert")
-  else
-    vim.api.nvim_win_set_cursor(0, { lnum, #line })
-    vim.cmd("startinsert!")
-  end
+  vim.api.nvim_win_set_cursor(0, { lnum, #lines[idx] })
+  vim.cmd("startinsert!")
 end
-
-local KEYS = { "<Tab>", "<S-Tab>", "<CR>", "o", "O", "dd", "i", "a", "A", "<Esc>" }
 
 local function set_keys(bufnr)
   local nmap = function(lhs, fn)
     vim.keymap.set("n", lhs, fn, { buffer = bufnr, silent = true, nowait = true })
   end
+  local imap = function(lhs, fn)
+    vim.keymap.set("i", lhs, fn, { buffer = bufnr, silent = true, nowait = true })
+  end
+
   nmap("<Tab>", function() apply_op(bufnr, "indent") end)
   nmap("<S-Tab>", function() apply_op(bufnr, "outdent") end)
-  nmap("<CR>", function() apply_op(bufnr, "new_sibling"); enter_insert(bufnr, "a") end)
-  nmap("o", function() apply_op(bufnr, "new_child"); enter_insert(bufnr, "a") end)
-  nmap("O", function() apply_op(bufnr, "new_above"); enter_insert(bufnr, "i") end)
+  nmap("<CR>", function() apply_op(bufnr, "new_sibling"); enter_insert_at_label_end(bufnr) end)
+  nmap("o", function() apply_op(bufnr, "new_child"); enter_insert_at_label_end(bufnr) end)
+  nmap("O", function() apply_op(bufnr, "new_above"); enter_insert_at_label_end(bufnr) end)
   nmap("dd", function() apply_op(bufnr, "delete") end)
-  nmap("i", function() enter_insert(bufnr, "i") end)
-  nmap("a", function() enter_insert(bufnr, "a") end)
-  nmap("A", function() enter_insert(bufnr, "a") end)
+  nmap("i", function() enter_insert_at_label_end(bufnr) end)
+  nmap("a", function() enter_insert_at_label_end(bufnr) end)
+  nmap("A", function() enter_insert_at_label_end(bufnr) end)
   nmap("<Esc>", function() M.exit(bufnr) end)
+
+  imap("<CR>", function() apply_op_stay_insert(bufnr, "new_sibling") end)
+  imap("<Tab>", function() apply_op_stay_insert(bufnr, "indent") end)
+  imap("<S-Tab>", function() apply_op_stay_insert(bufnr, "outdent") end)
+  imap("<C-d>", function() apply_op_stay_insert(bufnr, "delete") end)
+  imap("<Esc>", function()
+    vim.cmd("stopinsert")
+    vim.schedule(function() M.exit(bufnr) end)
+  end)
 end
 
 local function unset_keys(bufnr)
-  for _, lhs in ipairs(KEYS) do
+  for _, lhs in ipairs(N_KEYS) do
     pcall(vim.keymap.del, "n", lhs, { buffer = bufnr })
+  end
+  for _, lhs in ipairs(I_KEYS) do
+    pcall(vim.keymap.del, "i", lhs, { buffer = bufnr })
   end
 end
 
@@ -267,11 +293,17 @@ function M.enter(bufnr)
 
   set_keys(bufnr)
   vim.api.nvim_echo({ { "-- ASCII GRAPH --", "ModeMsg" } }, false, {})
+  enter_insert_at_label_end(bufnr)
 end
 
 function M.exit(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   if not state[bufnr] then return end
+  local block = state[bufnr]
+  local lines = vim.api.nvim_buf_get_lines(bufnr, block.start_l - 1, block.end_l, false)
+  local nodes = parse_all(lines, block.prefix)
+  local new_lines = render(nodes, block.prefix)
+  vim.api.nvim_buf_set_lines(bufnr, block.start_l - 1, block.end_l, false, new_lines)
   unset_keys(bufnr)
   state[bufnr] = nil
   vim.api.nvim_echo({ { "", "" } }, false, {})

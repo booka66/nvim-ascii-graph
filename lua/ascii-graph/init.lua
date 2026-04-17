@@ -386,7 +386,10 @@ function M.setup(opts)
   if opts.keymap then
     vim.keymap.set("n", opts.keymap, M.toggle, { desc = "Toggle ASCII graph mode" })
   end
+  require("ascii-graph.flowchart").setup({ keymap = opts.flowchart_keymap })
 end
+
+M.flowchart = setmetatable({}, { __index = function(_, k) return require("ascii-graph.flowchart")[k] end })
 
 M._internal = {
   parse_line = parse_line,
